@@ -492,6 +492,14 @@
           <div class="field-label">MAX_DIGITS</div>
           <input type="number" id="maxDigits" min="1" max="30" value="10">
         </div>
+        <div class="field">
+          <div class="field-label">TIMEOUT (ms)</div>
+          <input type="number" id="timeoutMs" min="50" max="5000" value="500">
+        </div>
+        <div class="field">
+          <div class="field-label">BATCH SIZE</div>
+          <input type="number" id="batchSize" min="1" max="50" value="20">
+        </div>
       </div>
 
       <div style="margin-top:16px; display:flex; align-items:center; gap:12px;">
@@ -592,7 +600,9 @@
       const maxDigits = parseInt(document.getElementById('maxDigits').value) || 10;
       const exhaustMode = document.getElementById('exhaustMode').checked;
       const deepCrawlMode = document.getElementById('deepCrawlMode').checked;
-      localStorage.setItem('rlg_settings', JSON.stringify({ selectedTlds, custom, minDigits, maxDigits, exhaustMode, deepCrawlMode }));
+      const timeoutMs = parseInt(document.getElementById('timeoutMs').value) || 500;
+      const batchSize = parseInt(document.getElementById('batchSize').value) || 20;
+      localStorage.setItem('rlg_settings', JSON.stringify({ selectedTlds, custom, minDigits, maxDigits, exhaustMode, deepCrawlMode, timeoutMs, batchSize }));
     }
 
     function loadSettings() {
@@ -608,6 +618,8 @@
       if (saved.maxDigits) document.getElementById('maxDigits').value = saved.maxDigits;
       if (saved.exhaustMode) document.getElementById('exhaustMode').checked = saved.exhaustMode;
       if (saved.deepCrawlMode) document.getElementById('deepCrawlMode').checked = saved.deepCrawlMode;
+      if (saved.timeoutMs) document.getElementById('timeoutMs').value = saved.timeoutMs;
+      if (saved.batchSize) document.getElementById('batchSize').value = saved.batchSize;
     }
 
     function addLog(msg, type = 'try') {
@@ -637,9 +649,10 @@
     const BATCH_SIZE = 20; // parallel checks per wave
 
     async function checkURL(url) {
+      const timeout = parseInt(document.getElementById('timeoutMs').value) || 500;
       return new Promise(resolve => {
         const img = new Image();
-        const t = setTimeout(() => { img.src = ''; resolve(false); }, TIMEOUT_MS);
+        const t = setTimeout(() => { img.src = ''; resolve(false); }, timeout);
         img.onload = () => { clearTimeout(t); resolve(true); };
         img.onerror = () => { clearTimeout(t); resolve(false); };
         img.src = url + '/favicon.ico?' + Date.now();
@@ -694,7 +707,9 @@
       startTimer();
 
       const exhaustMode = settings.exhaustMode;
-      addLog(`BATCH_SIZE: ${BATCH_SIZE} parallel · TIMEOUT: ${TIMEOUT_MS}ms`, 'info');
+      const batchSize = parseInt(document.getElementById('batchSize').value) || 20;
+      const timeoutMs = parseInt(document.getElementById('timeoutMs').value) || 500;
+      addLog(`BATCH: ${batchSize} parallel · TIMEOUT: ${timeoutMs}ms`, 'info');
       if (exhaustMode) addLog(`EXHAUST_MODE — ${tlds.length} TLDs per domain`, 'info');
 
       while (running) {
@@ -708,7 +723,7 @@
           for (const tld of tlds) batch.push(`https://${domain}${tld}`);
         } else {
           // BATCH_SIZE random domain+tld combos
-          for (let i = 0; i < BATCH_SIZE; i++) {
+          for (let i = 0; i < batchSize; i++) {
             const length = Math.floor(Math.random() * (settings.maxDigits - settings.minDigits + 1)) + settings.minDigits;
             const domain = getRandomString(length);
             const tld = tlds[Math.floor(Math.random() * tlds.length)];
