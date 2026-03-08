@@ -633,7 +633,7 @@
       return `https://${domain}${tld}`;
     }
 
-    const TIMEOUT_MS = 50;
+    const TIMEOUT_MS = 1500;
     const BATCH_SIZE = 20; // parallel checks per wave
 
     async function checkURL(url) {
