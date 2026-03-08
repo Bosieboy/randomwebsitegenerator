@@ -648,6 +648,29 @@
     const TIMEOUT_MS = 1500;
     const BATCH_SIZE = 20; // parallel checks per wave
 
+    // Stage 1: DNS prefetch — inject <link rel="dns-prefetch"> and see if browser resolves it
+    // This is a best-effort signal; not 100% reliable but very fast (~50ms)
+    function dnsPrefetch(hostname) {
+      return new Promise(resolve => {
+        const link = document.createElement('link');
+        link.rel = 'dns-prefetch';
+        link.href = '//' + hostname;
+        // Use a script src trick: if DNS resolves, script 404s fast; if not, it hangs longer
+        const script = document.createElement('script');
+        const token = Date.now() + Math.random();
+        const t = setTimeout(() => {
+          script.remove();
+          resolve(false); // took too long = likely no DNS
+        }, 150);
+        script.onerror = () => { clearTimeout(t); script.remove(); resolve(true); }; // error = host exists, DNS resolved
+        script.onload = () => { clearTimeout(t); script.remove(); resolve(true); };
+        script.src = `https://${hostname}/rlg-probe-${token}.js`;
+        document.head.appendChild(link);
+        document.head.appendChild(script);
+      });
+    }
+
+    // Stage 2: favicon check — only run if DNS probe passed
     async function checkURL(url) {
       const timeout = parseInt(document.getElementById('timeoutMs').value) || 500;
       return new Promise(resolve => {
@@ -659,6 +682,14 @@
       });
     }
 
+    // Two-stage check: fast DNS probe first, then favicon only if DNS hit
+    async function checkURLFast(url) {
+      const hostname = url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      const dnsHit = await dnsPrefetch(hostname);
+      if (!dnsHit) return false;
+      return await checkURL(url);
+    }
+
     // Check a batch in parallel, return first hit or null
     async function checkBatch(urls) {
       return new Promise(resolve => {
@@ -666,7 +697,7 @@
         let found = false;
         if (!urls.length) { resolve(null); return; }
         urls.forEach(url => {
-          checkURL(url).then(ok => {
+          checkURLFast(url).then(ok => {
             if (ok && !found) { found = true; resolve(url); }
             else if (++settled === urls.length && !found) resolve(null);
           });
