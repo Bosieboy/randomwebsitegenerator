@@ -643,20 +643,51 @@
     const TIMEOUT_MS = 1500;
     const BATCH_SIZE = 20; // parallel checks per wave
 
+    let calibratedTimeout = 2000; // default until calibrated
+
+    async function calibratePing() {
+      addLog('calibrating timeout against google.com...', 'info');
+      statStatus.textContent = 'CALIBRATING';
+      const samples = [];
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now();
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), 5000);
+          await fetch('https://www.google.com/favicon.ico?' + Date.now(), {
+            mode: 'no-cors', cache: 'no-store', signal: controller.signal
+          });
+          clearTimeout(t);
+          samples.push(performance.now() - start);
+        } catch(e) { /* ignore */ }
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (samples.length === 0) {
+        addLog('calibration failed — using 2000ms fallback', 'error');
+        return 2000;
+      }
+      const avg = samples.reduce((a,b) => a+b, 0) / samples.length;
+      // Give 3× headroom so slow sites still have a chance
+      const timeout = Math.round(Math.min(Math.max(avg * 3, 300), 4000));
+      addLog(`ping avg: ${Math.round(avg)}ms → timeout set to ${timeout}ms`, 'found');
+      return timeout;
+    }
+
     // Check via fetch — works on existing domains even without favicon
     async function checkURLFast(url) {
       try {
         const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(url, {
+        const t = setTimeout(() => controller.abort(), calibratedTimeout);
+        await fetch(url, {
           method: 'HEAD',
           mode: 'no-cors',
+          cache: 'no-store',
           signal: controller.signal
         });
         clearTimeout(t);
-        return true; // no-cors opaque response = domain exists and responded
+        return true;
       } catch (e) {
-        return false; // aborted or network error = doesn't exist
+        return false;
       }
     }
 
@@ -711,9 +742,13 @@
       statStatus.textContent = 'SCANNING';
       startTimer();
 
+      // Calibrate timeout based on actual ping to Google
+      calibratedTimeout = await calibratePing();
+      statStatus.textContent = 'SCANNING';
+
       const exhaustMode = settings.exhaustMode;
       const batchSize = parseInt(document.getElementById('batchSize').value) || 20;
-      addLog(`PARALLEL: ${batchSize} · DNS+favicon scan`, 'info');
+      addLog(`PARALLEL: ${batchSize} · TIMEOUT: ${calibratedTimeout}ms`, 'info');
       if (exhaustMode) addLog(`EXHAUST_MODE — ${tlds.length} TLDs per domain`, 'info');
 
       while (running) {
