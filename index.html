@@ -504,6 +504,17 @@
           <div style="font-size:11px; color:var(--muted); margin-top:3px;">try every TLD per domain before generating a new one</div>
         </div>
       </div>
+
+      <div style="margin-top:14px; display:flex; align-items:center; gap:12px;">
+        <div class="toggle-wrap">
+          <input type="checkbox" id="deepCrawlMode">
+          <label for="deepCrawlMode" class="toggle-label"></label>
+        </div>
+        <div>
+          <div class="field-label">DEEP_CRAWL</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:3px;">when site found: crawl for pages &amp; navigate to a random one</div>
+        </div>
+      </div>
     </div>
 
     <div class="terminal">
@@ -580,7 +591,8 @@
       const minDigits = parseInt(document.getElementById('minDigits').value) || 3;
       const maxDigits = parseInt(document.getElementById('maxDigits').value) || 10;
       const exhaustMode = document.getElementById('exhaustMode').checked;
-      localStorage.setItem('rlg_settings', JSON.stringify({ selectedTlds, custom, minDigits, maxDigits, exhaustMode }));
+      const deepCrawlMode = document.getElementById('deepCrawlMode').checked;
+      localStorage.setItem('rlg_settings', JSON.stringify({ selectedTlds, custom, minDigits, maxDigits, exhaustMode, deepCrawlMode }));
     }
 
     function loadSettings() {
@@ -595,6 +607,7 @@
       if (saved.minDigits) document.getElementById('minDigits').value = saved.minDigits;
       if (saved.maxDigits) document.getElementById('maxDigits').value = saved.maxDigits;
       if (saved.exhaustMode) document.getElementById('exhaustMode').checked = saved.exhaustMode;
+      if (saved.deepCrawlMode) document.getElementById('deepCrawlMode').checked = saved.deepCrawlMode;
     }
 
     function addLog(msg, type = 'try') {
@@ -711,7 +724,7 @@
       stopBtn.disabled = true;
     }
 
-    function onFound(url) {
+    async function onFound(url) {
       progressBar.classList.remove('active');
       progressBar.style.width = '100%';
       addLog(`LIVE SITE FOUND → <a class="found-url" href="${url}" target="_blank">${url}</a>`, 'found');
@@ -724,6 +737,77 @@
       running = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
+
+      // Deep crawl mode
+      if (document.getElementById('deepCrawlMode').checked) {
+        addLog(`DEEP_CRAWL — fetching sitemap/index...`, 'info');
+        statStatus.textContent = 'CRAWLING';
+
+        const pages = await crawlSite(url);
+
+        if (pages.length > 0) {
+          const pick = pages[Math.floor(Math.random() * pages.length)];
+          addLog(`found ${pages.length} page(s) — navigating to: <a class="found-url" href="${pick}" target="_blank">${pick}</a>`, 'found');
+          setTimeout(() => window.open(pick, '_blank'), 800);
+        } else {
+          addLog(`no sub-pages found — opening root: <a class="found-url" href="${url}" target="_blank">${url}</a>`, 'info');
+          setTimeout(() => window.open(url, '_blank'), 800);
+        }
+        statStatus.textContent = 'DONE';
+      }
+    }
+
+    // Crawl a site for internal links via a CORS proxy
+    async function crawlSite(baseUrl) {
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(baseUrl)}`;
+      try {
+        addLog(`fetching HTML via proxy...`, 'try');
+        const res = await Promise.race([
+          fetch(proxyUrl),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000))
+        ]);
+        if (!res.ok) throw new Error('proxy error');
+        const data = await res.json();
+        const html = data.contents || '';
+
+        // Parse all hrefs
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const links = Array.from(doc.querySelectorAll('a[href]'))
+          .map(a => a.getAttribute('href'))
+          .filter(href => href && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('javascript:'));
+
+        // Resolve to absolute URLs, keep only same-domain internal pages
+        const base = new URL(baseUrl);
+        const pages = [];
+        const seen = new Set();
+
+        for (const href of links) {
+          try {
+            const abs = new URL(href, baseUrl).href;
+            const u = new URL(abs);
+            // same host, not the root itself, not an asset
+            if (
+              u.host === base.host &&
+              abs !== baseUrl &&
+              abs !== baseUrl + '/' &&
+              !/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|pdf|zip)(\?|$)/i.test(u.pathname)
+            ) {
+              const key = u.pathname + u.search;
+              if (!seen.has(key)) {
+                seen.add(key);
+                pages.push(abs);
+              }
+            }
+          } catch {}
+        }
+
+        addLog(`crawled ${links.length} links → ${pages.length} unique pages`, 'info');
+        return pages;
+      } catch (e) {
+        addLog(`crawl failed: ${e.message}`, 'error');
+        return [];
+      }
     }
 
     startBtn.addEventListener('click', () => {
